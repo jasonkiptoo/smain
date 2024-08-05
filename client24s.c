@@ -95,6 +95,7 @@ void upload_file(int socket, const char *filename, const char *destination_path)
     char buffer[BUFFER_SIZE];
     int file_fd;
     ssize_t bytes_read, bytes_sent;
+    off_t file_size, total_bytes_sent = 0;
 
     file_fd = open(filename, O_RDONLY);
     if (file_fd < 0) {
@@ -107,13 +108,20 @@ void upload_file(int socket, const char *filename, const char *destination_path)
     write(socket, buffer, strlen(buffer));
 
     // Send file size
-    off_t file_size = lseek(file_fd, 0, SEEK_END);
+    file_size = lseek(file_fd, 0, SEEK_END);
     lseek(file_fd, 0, SEEK_SET);
     write(socket, &file_size, sizeof(file_size));
 
     // Send file content
     while ((bytes_read = read(file_fd, buffer, BUFFER_SIZE)) > 0) {
         bytes_sent = write(socket, buffer, bytes_read);
+        if (bytes_sent < 0) {
+            perror("Error sending file");
+            close(file_fd);
+            return;
+        }
+        total_bytes_sent += bytes_sent;
+        printf("Uploaded %ld/%ld bytes (%.2f%%)\n", total_bytes_sent, file_size, (total_bytes_sent / (float)file_size) * 100);
     }
 
     close(file_fd);
