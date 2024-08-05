@@ -10,11 +10,12 @@
 #define PORT 8081
 #define BUFFER_SIZE 1024
 
-void handle_smain(int smain_socket);
+void handle_client(int client_socket);
+void handle_pdf_request(int client_socket, char *filename);
 
 int main() {
-    int server_socket, smain_socket;
-    struct sockaddr_in server_addr, smain_addr;
+    int server_socket, client_socket;
+    struct sockaddr_in server_addr, client_addr;
     socklen_t addr_size;
 
     server_socket = socket(AF_INET, SOCK_STREAM, 0);
@@ -42,20 +43,20 @@ int main() {
     printf("Spdf server listening on port %d\n", PORT);
 
     while (1) {
-        addr_size = sizeof(smain_addr);
-        smain_socket = accept(server_socket, (struct sockaddr*)&smain_addr, &addr_size);
-        if (smain_socket < 0) {
+        addr_size = sizeof(client_addr);
+        client_socket = accept(server_socket, (struct sockaddr*)&client_addr, &addr_size);
+        if (client_socket < 0) {
             perror("Accept failed");
             continue;
         }
 
         if (fork() == 0) {
             close(server_socket);
-            handle_smain(smain_socket);
-            close(smain_socket);
+            handle_client(client_socket);
+            close(client_socket);
             exit(0);
         } else {
-            close(smain_socket);
+            close(client_socket);
         }
     }
 
@@ -63,49 +64,42 @@ int main() {
     return 0;
 }
 
-void handle_smain(int smain_socket) {
+void handle_client(int client_socket) {
     char buffer[BUFFER_SIZE];
-    char command[BUFFER_SIZE], arg1[BUFFER_SIZE], arg2[BUFFER_SIZE];
-    int file_size, bytes_received, bytes_written;
-    int file_fd;
+    char command[BUFFER_SIZE], arg1[BUFFER_SIZE];
 
     while (1) {
         bzero(buffer, BUFFER_SIZE);
-        read(smain_socket, buffer, BUFFER_SIZE);
-        sscanf(buffer, "%s %s %s", command, arg1, arg2);
+        read(client_socket, buffer, BUFFER_SIZE);
+        sscanf(buffer, "%s %s", command, arg1);
 
-        if (strcmp(command, "upload") == 0) {
-            read(smain_socket, &file_size, sizeof(file_size));
-            file_fd = open(arg1, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-            if (file_fd < 0) {
-                perror("File open failed");
-                continue;
-            }
-            while (file_size > 0) {
-                bytes_received = read(smain_socket, buffer, BUFFER_SIZE);
-                bytes_written = write(file_fd, buffer, bytes_received);
-                file_size -= bytes_written;
-            }
-            close(file_fd);
-        } else if (strcmp(command, "download") == 0) {
-            file_fd = open(arg1, O_RDONLY);
-            if (file_fd < 0) {
-                perror("File open failed");
-                continue;
-            }
-            file_size = lseek(file_fd, 0, SEEK_END);
-            lseek(file_fd, 0, SEEK_SET);
-            write(smain_socket, &file_size, sizeof(file_size));
-            while ((bytes_received = read(file_fd, buffer, BUFFER_SIZE)) > 0) {
-                write(smain_socket, buffer, bytes_received);
-            }
-            close(file_fd);
-        } else if (strcmp(command, "delete") == 0) {
-            if (unlink(arg1) < 0) {
-                perror("File deletion failed");
-            }
+        if (strcmp(command, "dfile") == 0) {
+            handle_pdf_request(client_socket, arg1);
         } else {
-            write(smain_socket, "Invalid command\n", strlen("Invalid command\n"));
+            write(client_socket, "Invalid command\n", strlen("Invalid command\n"));
         }
     }
+}
+
+void handle_pdf_request(int client_socket, char *filename) {
+    char buffer[BUFFER_SIZE];
+    int file_size, bytes_read, bytes_sent;
+    int src_fd;
+
+    src_fd = open(filename, O_RDONLY);
+    if (src_fd < 0) {
+        perror("File open failed");
+        write(client_socket, "File not found\n", strlen("File not found\n"));
+        return;
+    }
+
+    file_size = lseek(src_fd, 0, SEEK_END);
+    lseek(src_fd, 0, SEEK_SET);
+    write(client_socket, &file_size, sizeof(file_size));
+
+    while ((bytes_read = read(src_fd, buffer, BUFFER_SIZE)) > 0) {
+        bytes_sent = write(client_socket, buffer, bytes_read);
+    }
+
+    close(src_fd);
 }

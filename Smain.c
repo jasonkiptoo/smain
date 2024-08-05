@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <dirent.h>
 
 #define PORT 8080
 #define BUFFER_SIZE 1024
@@ -18,7 +19,7 @@ void handle_dfile(int client_socket, char *filename);
 void handle_rmfile(int client_socket, char *filename);
 void handle_dtar(int client_socket, char *filetype);
 void handle_display(int client_socket, char *pathname);
-void ensure_directory_exists(const char *path);
+void handle_list(int client_socket, char *directory);
 
 int main() {
     int server_socket, client_socket;
@@ -90,6 +91,8 @@ void handle_client(int client_socket) {
             handle_dtar(client_socket, arg1);
         } else if (strcmp(command, "display") == 0) {
             handle_display(client_socket, arg1);
+        } else if (strcmp(command, "list") == 0) {
+            handle_list(client_socket, arg1);
         } else {
             write(client_socket, "Invalid command\n", strlen("Invalid command\n"));
         }
@@ -100,16 +103,9 @@ void handle_ufile(int client_socket, char *filename, char *destination_path) {
     char buffer[BUFFER_SIZE];
     int file_size, bytes_received, bytes_written;
     int dest_fd;
-    int total_bytes_received = 0;
 
-    // Read file size from client
-    if (read(client_socket, &file_size, sizeof(file_size)) <= 0) {
-        perror("Failed to read file size");
-        write(client_socket, "Error reading file size\n", strlen("Error reading file size\n"));
-        return;
-    }
+    read(client_socket, &file_size, sizeof(file_size));
 
-    // Open destination file
     if (strstr(filename, ".c")) {
         dest_fd = open(destination_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     } else if (strstr(filename, ".pdf")) {
@@ -127,42 +123,17 @@ void handle_ufile(int client_socket, char *filename, char *destination_path) {
 
     if (dest_fd < 0) {
         perror("File open failed");
-        write(client_socket, "File open failed\n", strlen("File open failed\n"));
         return;
     }
 
-    // Receive file and write to disk
     while (file_size > 0) {
         bytes_received = read(client_socket, buffer, BUFFER_SIZE);
-        if (bytes_received <= 0) {
-            perror("Failed to receive file data");
-            write(client_socket, "Error receiving file data\n", strlen("Error receiving file data\n"));
-            close(dest_fd);
-            return;
-        }
         bytes_written = write(dest_fd, buffer, bytes_received);
-        if (bytes_written < 0) {
-            perror("Failed to write file data");
-            write(client_socket, "Error writing file data\n", strlen("Error writing file data\n"));
-            close(dest_fd);
-            return;
-        }
         file_size -= bytes_written;
-        total_bytes_received += bytes_written;
-
-        // Print progress to server console
-        printf("Received %d bytes out of %d bytes\n", total_bytes_received, file_size + total_bytes_received);
     }
 
     close(dest_fd);
     write(client_socket, "File uploaded successfully\n", strlen("File uploaded successfully\n"));
-    printf("File upload completed: %s\n", filename);
-}
-
-void ensure_directory_exists(const char *path) {
-    char cmd[BUFFER_SIZE];
-    snprintf(cmd, sizeof(cmd), "mkdir -p %s", path);
-    system(cmd); // Use system() to run the mkdir command
 }
 
 void handle_dfile(int client_socket, char *filename) {
@@ -237,4 +208,27 @@ void handle_dtar(int client_socket, char *filetype) {
 void handle_display(int client_socket, char *pathname) {
     // Combine list of .c, .pdf, and .txt files and send to client (not implemented here)
     write(client_socket, "Displaying files\n", strlen("Displaying files\n"));
+}
+
+void handle_list(int client_socket, char *directory) {
+    char buffer[BUFFER_SIZE];
+    DIR *dir;
+    struct dirent *entry;
+
+    // Open the directory
+    dir = opendir(directory);
+    if (dir == NULL) {
+        perror("Failed to open directory");
+        write(client_socket, "Error opening directory\n", strlen("Error opening directory\n"));
+        return;
+    }
+
+    // Send directory listing to client
+    while ((entry = readdir(dir)) != NULL) {
+        snprintf(buffer, sizeof(buffer), "%s\n", entry->d_name);
+        write(client_socket, buffer, strlen(buffer));
+    }
+
+    closedir(dir);
+    write(client_socket, "End of directory listing\n", strlen("End of directory listing\n"));
 }
