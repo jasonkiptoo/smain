@@ -18,6 +18,7 @@ void handle_dfile(int client_socket, char *filename);
 void handle_rmfile(int client_socket, char *filename);
 void handle_dtar(int client_socket, char *filetype);
 void handle_display(int client_socket, char *pathname);
+void ensure_directory_exists(const char *path);
 
 int main() {
     int server_socket, client_socket;
@@ -99,9 +100,16 @@ void handle_ufile(int client_socket, char *filename, char *destination_path) {
     char buffer[BUFFER_SIZE];
     int file_size, bytes_received, bytes_written;
     int dest_fd;
+    int total_bytes_received = 0;
 
-    read(client_socket, &file_size, sizeof(file_size));
+    // Read file size from client
+    if (read(client_socket, &file_size, sizeof(file_size)) <= 0) {
+        perror("Failed to read file size");
+        write(client_socket, "Error reading file size\n", strlen("Error reading file size\n"));
+        return;
+    }
 
+    // Open destination file
     if (strstr(filename, ".c")) {
         dest_fd = open(destination_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     } else if (strstr(filename, ".pdf")) {
@@ -119,17 +127,42 @@ void handle_ufile(int client_socket, char *filename, char *destination_path) {
 
     if (dest_fd < 0) {
         perror("File open failed");
+        write(client_socket, "File open failed\n", strlen("File open failed\n"));
         return;
     }
 
+    // Receive file and write to disk
     while (file_size > 0) {
         bytes_received = read(client_socket, buffer, BUFFER_SIZE);
+        if (bytes_received <= 0) {
+            perror("Failed to receive file data");
+            write(client_socket, "Error receiving file data\n", strlen("Error receiving file data\n"));
+            close(dest_fd);
+            return;
+        }
         bytes_written = write(dest_fd, buffer, bytes_received);
+        if (bytes_written < 0) {
+            perror("Failed to write file data");
+            write(client_socket, "Error writing file data\n", strlen("Error writing file data\n"));
+            close(dest_fd);
+            return;
+        }
         file_size -= bytes_written;
+        total_bytes_received += bytes_written;
+
+        // Print progress to server console
+        printf("Received %d bytes out of %d bytes\n", total_bytes_received, file_size + total_bytes_received);
     }
 
     close(dest_fd);
     write(client_socket, "File uploaded successfully\n", strlen("File uploaded successfully\n"));
+    printf("File upload completed: %s\n", filename);
+}
+
+void ensure_directory_exists(const char *path) {
+    char cmd[BUFFER_SIZE];
+    snprintf(cmd, sizeof(cmd), "mkdir -p %s", path);
+    system(cmd); // Use system() to run the mkdir command
 }
 
 void handle_dfile(int client_socket, char *filename) {
